@@ -1,5 +1,7 @@
 # Modernization audit — 2026-11-10
 
+This is the earlier modernization record. See [the later predeployment review](PREDEPLOYMENT.md) for Docker, live read-only checks and current blockers.
+
 The working tree was clean at the start. Changes preserve SAM/CloudFormation, Amplify Hosting, Cognito, AppSync, API Gateway, DynamoDB and the asynchronous Plaid worker architecture. No cloud deployment or external publication was performed.
 
 ## Findings and changes

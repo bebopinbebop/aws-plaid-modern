@@ -1,3 +1,5 @@
+> **Predeployment refresh (2026-11-10):** Docker/SAM container builds, local Lambda smoke checks and six AppSync service evaluations now pass. See [the current predeployment review](doc/PREDEPLOYMENT.md) for exact scope, target, credential helper, blockers and future deployment commands. No AWS deployment has occurred. The older results below remain a historical record.
+
 # AWS Plaid Modern — setup, run and deployment guide
 
 This guide documents the modernized repository as of **2026-11-10**. It is prepended for review and manual merging. **The complete README that existed before this addition is preserved verbatim after the “Preserved previous README” divider.** The [modernization audit](doc/MODERNIZATION.md) records implementation findings and the earlier validation results.
