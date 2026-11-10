@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import json
+
 from typing import Dict, Any, List, Union
 
 from aws_lambda_powertools import Logger, Metrics
@@ -10,12 +12,12 @@ import botocore
 import plaid
 from plaid.model.transactions_sync_request import TransactionsSyncRequest
 from plaid.model.transactions_sync_response import TransactionsSyncResponse
-from plaid.model.transactions_sync_request_options import TransactionsSyncRequestOptions
 from plaid.model.transaction import Transaction
 from plaid.model.removed_transaction import RemovedTransaction
 
 from app import utils, constants, exceptions, datastore
 from app.products import AbstractProduct
+from app.products.accounts_balance import AccountsBalance
 
 __all__ = ["Transactions"]
 
@@ -41,7 +43,6 @@ class Transactions(AbstractProduct):
             transaction_id = transaction
 
         message = {
-            "DelaySeconds": 0,
             "Id": utils.generate_id(),
             "MessageAttributes": {
                 "ItemId": {
@@ -109,6 +110,7 @@ class Transactions(AbstractProduct):
         except botocore.exceptions.ClientError:
             logger.exception(f"Failed to update cursor to {cursor}")
             metrics.add_metric(name="UpdateCursorFailed", unit=MetricUnit.Count, value=1)
+            raise
 
     def sync(self, user_id: str, item_id: str) -> None:
         logger.debug("Begin transaction sync")
@@ -123,9 +125,12 @@ class Transactions(AbstractProduct):
         access_token: str = item[constants.TOKEN_ATTRIBUTE_NAME]
         cursor: Union[None, str] = item.get(constants.CURSOR_ATTRIBUTE_NAME)
 
+        original_cursor = cursor
+        restart_count = 0
         added = []
         modified = []
         removed = []  # Removed transaction ids
+        accounts = {}
         has_more = True
 
         # Iterate through each page of new transaction updates for item
@@ -135,7 +140,6 @@ class Transactions(AbstractProduct):
             params = {
                 "access_token": access_token,
                 "count": constants.PLAID_TRANSACTION_SYNC_COUNT_MAX,
-                "options": TransactionsSyncRequestOptions(include_personal_finance_category=True),
             }
             if cursor:
                 params["cursor"] = cursor
@@ -144,10 +148,22 @@ class Transactions(AbstractProduct):
 
             try:
                 response: TransactionsSyncResponse = self.client.transactions_sync(request)
-            except plaid.ApiException:
-                logger.exception("Failed to call transactions sync")
+            except plaid.ApiException as error:
+                try:
+                    code = json.loads(error.body or "{}").get("error_code")
+                except (ValueError, TypeError):
+                    code = None
+                if code == "TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION" and restart_count < 2:
+                    restart_count += 1
+                    cursor = original_cursor
+                    added, modified, removed = [], [], []
+                    accounts = {}
+                    continue
+                logger.error("Transactions sync failed; retry required")
                 raise
 
+            for account in response.get("accounts", []):
+                accounts[account.account_id] = account
             # Add this page of results
             added.extend(response["added"])
             modified.extend(response["modified"])
@@ -167,7 +183,11 @@ class Transactions(AbstractProduct):
             self.build_message(user_id, item_id, "REMOVE", transaction) for transaction in removed
         ]
 
-        all_transactions = added + modified + removed
+        account_messages = [
+            AccountsBalance.build_message(user_id, item_id, account)
+            for account in accounts.values()
+        ]
+        all_transactions = account_messages + added + modified + removed
         if all_transactions:
             self.send_messages(all_transactions)
 

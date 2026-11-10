@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 from app import constants
 
-__all__ = ["check_institution", "delete_transactions"]
+__all__ = ["check_institution", "delete_items"]
 
 
 TABLE_NAME = os.getenv("TABLE_NAME")

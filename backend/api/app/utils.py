@@ -36,7 +36,7 @@ PLAID_SECRET_ARN = os.getenv("PLAID_SECRET_ARN")
 
 logger = Logger(child=True)
 metrics = Metrics()
-secrets_provider = parameters.SecretsProvider(config=BOTO3_CONFIG)
+secrets_provider = parameters.SecretsProvider(boto_config=BOTO3_CONFIG)
 
 
 def get_plaid_client() -> plaid_api.PlaidApi:

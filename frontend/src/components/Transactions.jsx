@@ -10,6 +10,7 @@ const logger = new ConsoleLogger("Transactions");
 export default function Transactions({ id, accounts = {} }) {
 
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [transactions, setTransactions] = useState([]);
 
   const [nextToken, setNextToken] = useState(null);
@@ -25,6 +26,7 @@ export default function Transactions({ id, accounts = {} }) {
         variables: { id }
       });
       setTransactions(res.data.getTransactions.transactions);
+      setHasMorePages(Boolean(res.data.getTransactions.cursor));
       if (res.data.getTransactions.cursor) {
         setHasMorePages(true);
         setNextToken(res.data.getTransactions.cursor);
@@ -32,6 +34,7 @@ export default function Transactions({ id, accounts = {} }) {
       setLoading(false);
     } catch (err) {
       setLoading(false);
+      setError('Unable to load transactions. Use Reload accounts and transactions to retry.');
       logger.error('unable to get transactions', err);
     }
   }
@@ -86,14 +89,14 @@ export default function Transactions({ id, accounts = {} }) {
               })
             ) : (
               <TableRow>
-                <TableCell colSpan="6">Waiting for transaction data...</TableCell>
+                <TableCell colSpan="6">{error || 'Waiting for transaction data. Reload after a few seconds.'}</TableCell>
               </TableRow>
             )
           )}
         </TableBody>
       </Table>
       {transactions.length ? (
-        <Button isDisabled={!hasMorePages} onClick={handleLoadMore} size="small" variable="primary">Load More</Button>
+        <Button isDisabled={!hasMorePages} onClick={handleLoadMore} size="small" variation="primary">Load More</Button>
         ) : (
         <div/>
       )}

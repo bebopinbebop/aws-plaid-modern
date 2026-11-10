@@ -36,7 +36,6 @@ class InvestmentsTransactions:
         """
 
         message = {
-            "DelaySeconds": 0,
             "Id": utils.generate_id(),
             "MessageAttributes": {
                 "ItemId": {

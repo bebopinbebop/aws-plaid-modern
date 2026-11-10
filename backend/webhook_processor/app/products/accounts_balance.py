@@ -22,15 +22,15 @@ metrics = Metrics()
 
 
 class AccountsBalance(AbstractProduct):
+    @staticmethod
     def build_message(
-        self, user_id: str, item_id: str, account: AccountBase, today: str = None
+        user_id: str, item_id: str, account: AccountBase, today: str = None
     ) -> Dict[str, Any]:
         """
         Build an SQS message from a Plaid Account
         """
 
         message = {
-            "DelaySeconds": 0,
             "Id": utils.generate_id(),
             "MessageAttributes": {
                 "ItemId": {

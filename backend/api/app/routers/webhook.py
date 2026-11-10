@@ -23,7 +23,7 @@ import requests
 if TYPE_CHECKING:
     from mypy_boto3_sqs.client import SQSClient
 
-from app import constants, schemas
+from app import constants, schemas, utils
 
 __all__ = ["router"]
 
@@ -66,7 +66,15 @@ def get_credentials() -> Dict[str, str]:
 
 
 def verify(body: str, signed_jwt: str) -> bool:
-    current_key_id = jwt.get_unverified_header(signed_jwt)["kid"]
+    try:
+        header = jwt.get_unverified_header(signed_jwt)
+        if header.get("alg") != "ES256":
+            return False
+        current_key_id = header["kid"]
+        if not isinstance(current_key_id, str):
+            return False
+    except (jwt.JWTError, KeyError, TypeError, ValueError):
+        return False
 
     credentials = get_credentials()
 
@@ -85,6 +93,7 @@ def verify(body: str, signed_jwt: str) -> bool:
                     "secret": credentials["client_secret"],
                     "key_id": key_id,
                 },
+                timeout=(2, 4),
             )
 
             # If this is the case, the key ID may be invalid.
@@ -116,11 +125,16 @@ def verify(body: str, signed_jwt: str) -> bool:
         claims = jwt.decode(signed_jwt, key, algorithms=["ES256"])
     except jwt.JWTError:
         metrics.add_metric(name="JWTDecodeError", unit=MetricUnit.Count, value=1)
-        logger.warning(f"Failed to decode JWT: {signed_jwt}")
+        logger.warning("Failed to decode webhook JWT")
         return False
 
     # Ensure that the token is not expired.
-    if claims["iat"] < time.time() - constants.TOKEN_EXPIRATION:
+    issued_at = claims.get("iat")
+    if (
+        not isinstance(issued_at, (int, float))
+        or issued_at < time.time() - constants.TOKEN_EXPIRATION
+        or issued_at > time.time() + 30
+    ):
         metrics.add_metric(name="JWTKeyExpired", unit=MetricUnit.Count, value=1)
         logger.warning(f"Key {current_key_id} has expired")
         return False
@@ -132,17 +146,17 @@ def verify(body: str, signed_jwt: str) -> bool:
 
     # Ensure that the hash of the body matches the claim.
     # Use constant time comparison to prevent timing attacks.
-    return hmac.compare_digest(body_hash, claims["request_body_sha256"])
+    expected_hash = claims.get("request_body_sha256")
+    return isinstance(expected_hash, str) and hmac.compare_digest(body_hash, expected_hash)
 
 
 @router.post("/")
 @tracer.capture_method(capture_response=False)
 def post_webhook() -> Response:
-    body = router.current_event.body
+    body = router.current_event.decoded_body
     if not body:
         raise BadRequestError("No body found in request")
 
-    json_body: Dict[str, Any] = router.current_event.json_body
     plaid_verification = router.current_event.get_header_value("Plaid-Verification")
 
     if not plaid_verification:
@@ -154,9 +168,10 @@ def post_webhook() -> Response:
         raise BadRequestError("Failed to verify request from Plaid")
 
     try:
+        json_body: Dict[str, Any] = router.current_event.json_body
         validate(event=json_body, schema=schemas.WEBHOOK_SCHEMA)
-    except SchemaValidationError:
-        logger.exception(f"Failed to validate webhook payload: {json_body}")
+    except (SchemaValidationError, ValueError, TypeError):
+        logger.warning("Invalid webhook payload")
         metrics.add_metric(name="ValidationFailed", unit=MetricUnit.Count, value=1)
         raise BadRequestError("Failed to validate request from Plaid")
 
@@ -167,7 +182,6 @@ def post_webhook() -> Response:
 
     params = {
         "QueueUrl": WEBHOOK_QUEUE_URL,
-        "DelaySeconds": 0,
         "MessageAttributes": {
             "WebhookType": {
                 "DataType": "String",
@@ -183,9 +197,7 @@ def post_webhook() -> Response:
             },
         },
         "MessageBody": body,
-        "MessageDeduplicationId": "{}_{}".format(
-            json_body["webhook_type"], json_body["webhook_code"]
-        ),
+        "MessageDeduplicationId": utils.generate_id(),
         "MessageGroupId": item_id,
     }
 

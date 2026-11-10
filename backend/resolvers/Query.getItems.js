@@ -7,7 +7,7 @@ import { util } from '@aws-appsync/utils';
  */
 export function request(ctx) {
   const { limit = 20, cursor: nextToken } = ctx.arguments;
-  const { username } = ctx.identity;
+  const { sub: username } = ctx.identity;
 
   return {
     operation: 'Query',
@@ -39,7 +39,7 @@ export function response(ctx) {
   }
 
   const { items = [], nextToken } = result;
-  const { username } = ctx.identity;
+  const { sub: username } = ctx.identity;
 
   if (items.length === 0) {
     return {

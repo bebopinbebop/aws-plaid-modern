@@ -1,13 +1,14 @@
 import { Authenticator } from '@aws-amplify/ui-react';
 import { useAuthenticator, View } from '@aws-amplify/ui-react';
 import { useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router';
+import { useNavigate, useLocation } from 'react-router-dom';
 
 export default function Login() {
   const { route } = useAuthenticator((context) => [context.route]);
   const location = useLocation();
   const navigate = useNavigate();
-  let from = location.state?.from?.pathname || '/';
+  const origin = location.state?.from;
+  const from = origin ? `${origin.pathname}${origin.search || ''}` : '/';
 
   const components = {
     SignUp: {

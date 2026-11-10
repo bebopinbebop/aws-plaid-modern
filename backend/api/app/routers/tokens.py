@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-from functools import partial
 import os
 from typing import Dict, Union, TYPE_CHECKING
 
@@ -15,11 +14,11 @@ from aws_lambda_powertools.event_handler.exceptions import (
 )
 import boto3
 import botocore
-from dynamodb_encryption_sdk.encrypted.client import EncryptedClient
+from dynamodb_encryption_sdk.encrypted import CryptoConfig
+from dynamodb_encryption_sdk.encrypted.item import encrypt_python_item
 from dynamodb_encryption_sdk.identifiers import CryptoAction
 from dynamodb_encryption_sdk.material_providers.aws_kms import AwsKmsCryptographicMaterialsProvider
-from dynamodb_encryption_sdk.structures import AttributeActions
-from dynamodb_encryption_sdk.internal.utils import encrypt_put_item
+from dynamodb_encryption_sdk.structures import AttributeActions, EncryptionContext
 import plaid
 from plaid.model.link_token_create_request import LinkTokenCreateRequest
 from plaid.model.link_token_create_request_user import LinkTokenCreateRequestUser
@@ -57,7 +56,11 @@ def create_link_token() -> Dict[str, str]:
     logger.append_keys(user_id=user_id)
     tracer.put_annotation(key="UserId", value=user_id)
 
+    oauth_options = {}
+    if os.getenv("PLAID_REDIRECT_URI"):
+        oauth_options["redirect_uri"] = os.environ["PLAID_REDIRECT_URI"]
     request = LinkTokenCreateRequest(
+        **oauth_options,
         products=[Products("transactions")],
         client_name="plaidaws",
         country_codes=[CountryCode("US")],
@@ -85,19 +88,25 @@ def exchange_token() -> Response:
     logger.append_keys(user_id=user_id)
     tracer.put_annotation(key="UserId", value=user_id)
 
-    # TODO: validate against METADATA_SCHEMA
-
-    public_token: Union[None, str] = router.current_event.json_body.get("public_token")
-    if not public_token:
+    try:
+        payload = router.current_event.json_body
+    except (ValueError, TypeError):
+        raise BadRequestError("Invalid JSON body")
+    if not isinstance(payload, dict):
+        raise BadRequestError("Expected a JSON object")
+    public_token = payload.get("public_token")
+    if not isinstance(public_token, str) or not public_token:
         raise BadRequestError("Public token not found in request")
 
-    metadata: Dict[str, str] = router.current_event.json_body.get("metadata", {})
-    if not metadata:
+    metadata: Dict[str, object] = payload.get("metadata", {})
+    if not isinstance(metadata, dict) or not metadata:
         raise BadRequestError("Metadata not found in request")
 
     institution = metadata.get("institution", {})
+    if not isinstance(institution, dict):
+        raise BadRequestError("Invalid institution metadata")
     institution_id = institution.get("institution_id")
-    if not institution_id:
+    if not isinstance(institution_id, str) or not institution_id:
         raise BadRequestError("Institution ID not found in request")
 
     if datastore.check_institution(user_id, institution_id):
@@ -123,33 +132,29 @@ def exchange_token() -> Response:
         default_action=CryptoAction.DO_NOTHING,
         attribute_actions={"access_token": CryptoAction.ENCRYPT_AND_SIGN},
     )
-    encrypted_client = EncryptedClient(
-        client=dynamodb.meta.client,
-        materials_provider=aws_kms_cmp,
-        attribute_actions=actions,
-        expect_standard_dictionaries=True,
-    )
-
     item = {
         "pk": f"USER#{user_id}#ITEM#{item_id}",
         "sk": "v0",
         "access_token": access_token,
         "institution_id": institution_id,
-        "institution_name": institution.get("name"),
+        "institution_name": institution.get("name") or institution_id,
         "link_session_id": metadata.get("link_session_id"),
         "created_at": now,
     }
 
-    def mock_write_method(**kwargs):
-        return kwargs.get("Item")
-
-    encrypt_item = partial(
-        encrypt_put_item,
-        encrypted_client._encrypt_item,
-        encrypted_client._item_crypto_config,
-        mock_write_method,
+    encrypted_item = encrypt_python_item(
+        item,
+        CryptoConfig(
+            materials_provider=aws_kms_cmp,
+            encryption_context=EncryptionContext(
+                table_name=TABLE_NAME,
+                partition_key_name="pk",
+                sort_key_name="sk",
+                attributes={"pk": {"S": item["pk"]}, "sk": {"S": item["sk"]}},
+            ),
+            attribute_actions=actions,
+        ),
     )
-    encrypted_item = encrypt_item(TableName=TABLE_NAME, Item=item)
 
     items = [
         {
@@ -177,7 +182,7 @@ def exchange_token() -> Response:
                     "pk": "ITEMS",
                     "sk": f"USER#{user_id}#ITEM#{item_id}",
                     "institution_id": institution_id,
-                    "institution_name": institution.get("name"),
+                    "institution_name": institution.get("name") or institution_id,
                 },
                 "ConditionExpression": "attribute_not_exists(pk) AND attribute_not_exists(sk)",
             }
@@ -206,22 +211,6 @@ def exchange_token() -> Response:
         logger.exception("Failed to add items to DynamoDB")
         metrics.add_metric(name="AddItemFailed", unit=MetricUnit.Count, value=1)
         raise
-
-    table: "Table" = dynamodb.Table(TABLE_NAME)
-
-    with table.batch_writer(overwrite_by_pkeys=["pk", "sk"]) as batch:
-        for account in metadata.get("accounts", []):
-            account_id = account["id"]
-            item = {
-                "pk": f"USER#{user_id}#ITEM#{item_id}",
-                "sk": f"ACCOUNT#{account_id}",
-                "account_id": account_id,
-                "mask": account["mask"],
-                "name": account["name"],
-                "subtype": account["subtype"],
-                "type": account["type"],
-            }
-            batch.put_item(Item=item)
 
     headers = {"Location": f"/v1/items/{item_id}"}
 

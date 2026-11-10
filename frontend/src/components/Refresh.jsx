@@ -17,7 +17,7 @@ export default function Refresh({ item_id }) {
         apiName,
         path: `/v1/items/${item_id}/refresh`
       }).response;
-      const data = await body.json();
+      const data = await body.text();
       logger.debug(`POST /v1/items/${item_id}/refresh response:`, data);
       setLoading(false);
     } catch (err) {

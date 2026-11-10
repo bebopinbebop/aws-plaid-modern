@@ -26,9 +26,9 @@ resolver.include_router(routers.webhook_router, prefix="/v1/webhook")
 
 
 @metrics.log_metrics(capture_cold_start_metric=True)
-@tracer.capture_lambda_handler
+@tracer.capture_lambda_handler(capture_response=False)
 @logger.inject_lambda_context(
-    correlation_id_path=correlation_paths.API_GATEWAY_HTTP, log_event=True
+    correlation_id_path=correlation_paths.API_GATEWAY_HTTP, log_event=False
 )
 def handler(event: Dict[str, Any], context: LambdaContext) -> Dict[str, Any]:
     return resolver.resolve(event, context)

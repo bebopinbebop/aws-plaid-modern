@@ -7,14 +7,15 @@ from typing import List, Dict, Any, Union
 
 from aws_lambda_powertools import Logger, Tracer, Metrics
 from aws_lambda_powertools.metrics import MetricUnit
-from aws_lambda_powertools.utilities.batch import BatchProcessor, EventType
+from aws_lambda_powertools.utilities.batch import BatchProcessor, SqsFifoPartialProcessor, EventType
 from aws_lambda_powertools.utilities.data_classes.dynamo_db_stream_event import (
     DynamoDBRecord,
 )
 from aws_lambda_powertools.utilities.data_classes.sqs_event import SQSRecord
 from aws_lambda_powertools.utilities.typing import LambdaContext
 
-from app import constants, products, datastore
+from app import constants, products, datastore, utils
+import boto3
 
 ENVIRONMENT = os.getenv("ENVIRONMENT", "dev")
 
@@ -23,7 +24,7 @@ logger = Logger(use_rfc3339=True, utc=True)
 metrics = Metrics()
 metrics.set_default_dimensions(environment=ENVIRONMENT)
 dynamodb_processor = BatchProcessor(event_type=EventType.DynamoDBStreams)
-sqs_processor = BatchProcessor(event_type=EventType.SQS)
+sqs_processor = SqsFifoPartialProcessor()
 
 transactions = products.Transactions()
 accounts_balance = products.AccountsBalance()
@@ -48,7 +49,22 @@ def record_handler(record: Union[DynamoDBRecord, SQSRecord]) -> None:
         logger.append_keys(item_id=item_id, user_id=user_id)
         tracer.put_annotation(key="ItemId", value=item_id)
         tracer.put_annotation(key="UserId", value=user_id)
-        transactions.sync(user_id, item_id)
+        # Serialize initialization with Plaid webhooks through the same FIFO group.
+        boto3.client("sqs", config=constants.BOTO3_CONFIG).send_message(
+            QueueUrl=os.environ["WEBHOOK_QUEUE_URL"],
+            MessageBody="{}",
+            MessageGroupId=item_id,
+            MessageDeduplicationId=utils.generate_id(),
+            MessageAttributes={
+                key: {"DataType": "String", "StringValue": value}
+                for key, value in {
+                    "ItemId": item_id,
+                    "UserId": user_id,
+                    "WebhookType": "TRANSACTIONS",
+                    "WebhookCode": "SYNC_UPDATES_AVAILABLE",
+                }.items()
+            },
+        )
 
     # Incoming Webhooks from SQS
     elif isinstance(record, SQSRecord):
@@ -78,8 +94,10 @@ def record_handler(record: Union[DynamoDBRecord, SQSRecord]) -> None:
             logger.exception(f"Webhook payload is invalid JSON: {record.body}")
             return
 
-        # refresh all balances on the item
-        accounts_balance.get_balances(user_id, item_id)
+        # Only an explicit balance refresh needs a synchronous institution request.
+        # Transactions webhooks must not be blocked by a slow balance endpoint.
+        if webhook_type == constants.PLAID_WEBHOOK_TYPE_BALANCE:
+            accounts_balance.get_balances(user_id, item_id)
 
         # https://plaid.com/docs/api/products/transactions/#webhooks
         if webhook_type == constants.PLAID_WEBHOOK_TYPE_TRANSACTIONS:
@@ -110,8 +128,8 @@ def record_handler(record: Union[DynamoDBRecord, SQSRecord]) -> None:
 
 
 @metrics.log_metrics(capture_cold_start_metric=False)
-@tracer.capture_lambda_handler
-@logger.inject_lambda_context(log_event=True)
+@tracer.capture_lambda_handler(capture_response=False)
+@logger.inject_lambda_context(log_event=False)
 def handler(event: Dict[str, Any], context: LambdaContext) -> Dict[str, Any]:
     records: List[Dict[str, Any]] = event.get("Records", [])
     if not records:

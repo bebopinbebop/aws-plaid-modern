@@ -8,7 +8,12 @@ from aws_lambda_powertools import Logger, Tracer, Metrics
 from aws_lambda_powertools.metrics import MetricUnit
 from aws_lambda_powertools.event_handler.api_gateway import Router, Response
 from aws_lambda_powertools.event_handler import content_types
-from aws_lambda_powertools.event_handler.exceptions import InternalServerError
+from aws_lambda_powertools.event_handler.exceptions import InternalServerError, NotFoundError
+from dynamodb_encryption_sdk.encrypted.table import EncryptedTable
+from dynamodb_encryption_sdk.identifiers import CryptoAction
+from dynamodb_encryption_sdk.material_providers.aws_kms import AwsKmsCryptographicMaterialsProvider
+from dynamodb_encryption_sdk.structures import AttributeActions
+from plaid.model.item_remove_request import ItemRemoveRequest
 import boto3
 import botocore
 
@@ -46,7 +51,6 @@ def post_refresh(item_id: str) -> Dict[str, Any]:
 
     params = {
         "QueueUrl": WEBHOOK_QUEUE_URL,
-        "DelaySeconds": 0,
         "MessageAttributes": {
             "WebhookType": {
                 "DataType": "String",
@@ -66,7 +70,7 @@ def post_refresh(item_id: str) -> Dict[str, Any]:
             },
         },
         "MessageBody": "{}",  # needs to be an empty JSON body
-        "MessageDeduplicationId": "BALANCE_DEFAULT_UPDATE",
+        "MessageDeduplicationId": utils.generate_id(),
         "MessageGroupId": item_id,
     }
 
@@ -101,20 +105,30 @@ def delete_item(item_id: str) -> Response:
             "pk": f"USER#{user_id}#ITEM#{item_id}",
             "sk": "v0",
         },
-        "ProjectionExpression": "#i",
-        "ExpressionAttributeNames": {
-            "#i": "institution_id",
-        },
+        "ConsistentRead": True,
     }
     logger.debug(params)
 
     try:
-        response = table.get_item(**params)
+        encrypted_table = EncryptedTable(
+            table=table,
+            materials_provider=AwsKmsCryptographicMaterialsProvider(key_id=os.environ["KEY_ARN"]),
+            attribute_actions=AttributeActions(
+                default_action=CryptoAction.DO_NOTHING,
+                attribute_actions={"access_token": CryptoAction.ENCRYPT_AND_SIGN},
+            ),
+        )
+        response = encrypted_table.get_item(**params)
     except botocore.exceptions.ClientError:
         logger.exception("Unable to get item")
         raise InternalServerError("Unable to get item")
 
-    institution_id: Union[str, None] = response.get("Item", {}).get("institution_id")
+    item = response.get("Item")
+    if not item:
+        raise NotFoundError("Item not found")
+    institution_id = item["institution_id"]
+    # Revoke the Plaid connection before deleting the only copy of its token.
+    utils.get_plaid_client().item_remove(ItemRemoveRequest(access_token=item["access_token"]))
 
     items = [
         {
@@ -169,7 +183,7 @@ def delete_item(item_id: str) -> Response:
     except botocore.exceptions.ClientError:
         logger.exception("Failed to delete items to DynamoDB")
         metrics.add_metric(name="DeleteItemFailed", unit=MetricUnit.Count, value=1)
-        # raise
+        raise InternalServerError("Unable to delete item")
 
     datastore.delete_items(user_id, item_id)
 

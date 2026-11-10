@@ -6,7 +6,7 @@ import { util } from '@aws-appsync/utils';
  * @param ctx the request context
  */
 export function request(ctx) {
-  const { username } = ctx.identity;
+  const { sub: username } = ctx.identity;
   const { id, limit = 20, cursor: nextToken } = ctx.arguments;
 
   return {

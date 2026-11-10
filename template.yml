@@ -32,8 +32,11 @@ Parameters:
     Default: sandbox
     AllowedValues:
       - sandbox
-      - development
       - production
+  PlaidRedirectUri:
+    Type: String
+    Default: ""
+    Description: Optional HTTPS frontend URL registered in the Plaid Dashboard for OAuth institutions
   GitHubAccessToken:
     Type: String
     Description: GitHub Personal Access Token
@@ -52,14 +55,13 @@ Globals:
         AWS_LAMBDA_LOG_LEVEL: INFO
         POWERTOOLS_LOG_LEVEL: INFO
         POWERTOOLS_LOGGER_SAMPLE_RATE: 0.1
-        POWERTOOLS_LOGGER_LOG_EVENT: true
+        POWERTOOLS_LOGGER_LOG_EVENT: false
         POWERTOOLS_METRICS_NAMESPACE: PlaidApi
         ENVIRONMENT: !Ref Environment
         TABLE_NAME: !Ref Table
     Handler: app.lambda_handler.handler
     Layers:
-      # https://docs.powertools.aws.dev/lambda/python/latest/#lambda-layer
-      - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPythonV3-python313-x86_64:4"
+      # Powertools and the AWS SDK are versioned in the dependency layer.
       - !Ref DependencyLayer
     LoggingConfig:
       LogFormat: JSON
@@ -85,7 +87,7 @@ Resources:
             reason: "Ignoring KMS key"
     Properties:
       Description: !Sub "Plaid Credential - ${PlaidEnvironment}"
-      Name: !Sub "plaid/${PlaidEnvironment}/credentials"
+      Name: !Sub "${AWS::StackName}/plaid/credentials"
       SecretString: !Sub |-
         {
           "client_id": "${PlaidClientId}",
@@ -207,6 +209,8 @@ Resources:
           - id: W48
             reason: "Ignoring KMS key, uses SSE-SQS"
     Properties:
+      FifoQueue: true
+      ContentBasedDeduplication: true
       DelaySeconds: 0
       MessageRetentionPeriod: 1209600 # 14 days
       ReceiveMessageWaitTimeSeconds: 20 # long polling
@@ -235,6 +239,8 @@ Resources:
           - id: W48
             reason: "Ignoring KMS key, uses SSE-SQS"
     Properties:
+      FifoQueue: true
+      ContentBasedDeduplication: true
       DelaySeconds: 0
       MessageRetentionPeriod: 1209600 # 14 days
       ReceiveMessageWaitTimeSeconds: 20 # long polling
@@ -325,6 +331,7 @@ Resources:
             Action:
               - "kms:DescribeKey"
               - "kms:Encrypt"
+              - "kms:Decrypt"
               - "kms:GenerateDataKey*"
               - "kms:ReEncrypt*"
             Resource: "*"
@@ -408,8 +415,6 @@ Resources:
               Service: !Sub "apigateway.${AWS::URLSuffix}"
             Action: "sts:AssumeRole"
       Description: !Sub "DO NOT DELETE - Used by API Gateway. Created by ${AWS::StackId}"
-      ManagedPolicyArns:
-        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs"
       Policies:
         - PolicyName: AllowLambdaInvoke
           PolicyDocument:
@@ -498,8 +503,6 @@ Resources:
   GraphQLApi:
     Type: "AWS::AppSync::GraphQLApi"
     Properties:
-      AdditionalAuthenticationProviders:
-        - AuthenticationType: AWS_IAM
       AuthenticationType: AMAZON_COGNITO_USER_POOLS
       LogConfig:
         CloudWatchLogsRoleArn: !GetAtt AppSyncRole.Arn
@@ -539,6 +542,7 @@ Resources:
 
   GetItemsResolver:
     Type: "AWS::AppSync::Resolver"
+    DependsOn: GraphQLSchema
     Properties:
       ApiId: !GetAtt GraphQLApi.ApiId
       Code: |-
@@ -572,6 +576,7 @@ Resources:
 
   GetAccountsResolver:
     Type: "AWS::AppSync::Resolver"
+    DependsOn: GraphQLSchema
     Properties:
       ApiId: !GetAtt GraphQLApi.ApiId
       Code: |-
@@ -605,6 +610,7 @@ Resources:
 
   GetTransactionsResolver:
     Type: "AWS::AppSync::Resolver"
+    DependsOn: GraphQLSchema
     Properties:
       ApiId: !GetAtt GraphQLApi.ApiId
       Code: |-
@@ -746,6 +752,7 @@ Resources:
         - email
       UsernameConfiguration:
         CaseSensitive: false
+      UserPoolTier: PLUS
       UserPoolAddOns:
         AdvancedSecurityMode: ENFORCED
       UserPoolTags:
@@ -765,7 +772,6 @@ Resources:
       AccessTokenValidity: 1
       AllowedOAuthFlows:
         - code
-        - implicit
       AllowedOAuthFlowsUserPoolClient: true
       AllowedOAuthScopes:
         - email
@@ -807,12 +813,6 @@ Resources:
         - ScopeDescription: Read/write access
           ScopeName: plaid.rw
       UserPoolId: !Ref CognitoUserPool
-
-  ApiGatewayAccount:
-    Type: "AWS::ApiGateway::Account"
-    DependsOn: HttpApi
-    Properties:
-      CloudWatchRoleArn: !GetAtt HttpApiRole.Arn
 
   AccessLogGroup:
     Type: "AWS::Logs::LogGroup"
@@ -869,6 +869,8 @@ Resources:
   ApiFunctionRole:
     Type: "AWS::IAM::Role"
     Properties:
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AWSXRayDaemonWriteAccess"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -911,11 +913,13 @@ Resources:
               - "dynamodb:DescribeTable"
               - "dynamodb:GetItem"
               - "dynamodb:PutItem"
+              - "dynamodb:Query"
             Resource: !GetAtt Table.Arn
           - Effect: Allow
             Action:
               - "kms:DescribeKey"
               - "kms:Encrypt"
+              - "kms:Decrypt"
               - "kms:GenerateDataKey*"
               - "kms:ReEncrypt*"
             Resource: !GetAtt EncryptionKey.Arn
@@ -947,6 +951,7 @@ Resources:
           PLAID_SECRET_ARN: !Ref PlaidCredential
           WEBHOOK_QUEUE_URL: !Ref WebhookQueue
           WEBHOOK_URL: !Sub "${HttpApi.ApiEndpoint}/v1/webhook"
+          PLAID_REDIRECT_URI: !Ref PlaidRedirectUri
           KEY_ARN: !GetAtt EncryptionKey.Arn
       MemorySize: 256 # megabytes
       Role: !GetAtt ApiFunctionRole.Arn
@@ -980,6 +985,8 @@ Resources:
   WebhookProcessorFunctionRole:
     Type: "AWS::IAM::Role"
     Properties:
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AWSXRayDaemonWriteAccess"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -1009,7 +1016,9 @@ Resources:
                 Resource: !GetAtt Table.Arn
               - Effect: Allow
                 Action: "sqs:SendMessage"
-                Resource: !GetAtt WriteQueue.Arn
+                Resource:
+                  - !GetAtt WriteQueue.Arn
+                  - !GetAtt WebhookQueue.Arn
               - Effect: Allow
                 Action:
                   - "sqs:DeleteMessage"
@@ -1071,6 +1080,7 @@ Resources:
         Variables:
           POWERTOOLS_SERVICE_NAME: webhook_processor
           QUEUE_URL: !Ref WriteQueue
+          WEBHOOK_QUEUE_URL: !Ref WebhookQueue
           PLAID_SECRET_ARN: !Ref PlaidCredential
           KEY_ARN: !GetAtt EncryptionKey.Arn
       Events:
@@ -1128,6 +1138,8 @@ Resources:
   BatchWriterFunctionRole:
     Type: "AWS::IAM::Role"
     Properties:
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AWSXRayDaemonWriteAccess"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -1200,48 +1212,15 @@ Resources:
         SQSEvent:
           Type: SQS
           Properties:
-            BatchSize: 100
+            BatchSize: 10
             Enabled: true
             FunctionResponseTypes:
               - ReportBatchItemFailures
-            MaximumBatchingWindowInSeconds: 60
             Queue: !GetAtt WriteQueue.Arn
             ScalingConfig:
               MaximumConcurrency: 5
       Role: !GetAtt BatchWriterFunctionRole.Arn
       Timeout: 30 # seconds
-
-  AmplifyRole:
-    Type: "AWS::IAM::Role"
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          Effect: Allow
-          Principal:
-            Service: !Sub "amplify.${AWS::URLSuffix}"
-          Action: "sts:AssumeRole"
-          Condition:
-            ArnLike:
-              "aws:SourceArn": !Sub "arn:${AWS::Partition}:amplify:${AWS::Region}:${AWS::AccountId}:apps/*"
-            StringEquals:
-              "aws:SourceAccount": !Ref "AWS::AccountId"
-      Description: !Sub "DO NOT DELETE - Used by Amplify. Created by CloudFormation ${AWS::StackId}"
-      ManagedPolicyArns:
-        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AdministratorAccess-Amplify"
-      Tags:
-        - Key: "aws-cloudformation:stack-name"
-          Value: !Ref "AWS::StackName"
-        - Key: "aws-cloudformation:stack-id"
-          Value: !Ref "AWS::StackId"
-        - Key: "aws-cloudformation:logical-id"
-          Value: AmplifyRole
-        - Key: GITHUB_ORG
-          Value: !Ref GitHubOrg
-        - Key: GITHUB_REPO
-          Value: !Ref GitHubRepo
-        - Key: Environment
-          Value: !Ref Environment
 
   FrontendApp:
     Type: "AWS::Amplify::App"
@@ -1249,28 +1228,25 @@ Resources:
       AccessToken: !Ref GitHubAccessToken
       BuildSpec: |-
         version: 1
-        frontend:
-          phases:
-            preBuild:
-              commands:
-                - cd frontend
-                - npm ci --no-fund --no-audit
-            build:
-              commands:
-                - REACT_APP_BACKEND_URL=${REACT_APP_BACKEND_URL}
-                - REACT_APP_COGNITO_CLIENT_ID=${REACT_APP_COGNITO_CLIENT_ID}
-                - REACT_APP_COGNITO_DOMAIN=${REACT_APP_COGNITO_DOMAIN}
-                - REACT_APP_COGNTIO_USERPOOL_ID=${REACT_APP_COGNTIO_USERPOOL_ID}
-                - REACT_APP_GRAPHQL_URL=${REACT_APP_GRAPHQL_URL}
-                - REACT_APP_REGION=${REACT_APP_REGION}
-                - npm run-script build
-          artifacts:
-            baseDirectory: frontend/build
-            files:
-              - "**/*"
-          cache:
-            paths:
-              - "frontend/node_modules/**/*"
+        applications:
+          - appRoot: frontend
+            frontend:
+              phases:
+                preBuild:
+                  commands:
+                    - nvm install 24
+                    - nvm use 24
+                    - npm ci --no-fund --no-audit
+                build:
+                  commands:
+                    - npm run build
+              artifacts:
+                baseDirectory: dist
+                files:
+                  - "**/*"
+              cache:
+                paths:
+                  - node_modules/**/*
       CustomHeaders: |-
         customHeaders:
           - pattern: '**/*'
@@ -1288,19 +1264,18 @@ Resources:
       Description: !Sub "Plaid Demo - ${Environment} (Plaid Env: ${PlaidEnvironment})"
       EnableBranchAutoDeletion: true
       EnvironmentVariables:
-        - Name: REACT_APP_BACKEND_URL
+        - Name: AMPLIFY_MONOREPO_APP_ROOT
+          Value: frontend
+        - Name: VITE_BACKEND_URL
           Value: !GetAtt HttpApi.ApiEndpoint
-        - Name: REACT_APP_COGNITO_DOMAIN
-          Value: !Sub "${UserPoolDomain}.auth.${AWS::Region}.amazoncognito.com"
-        - Name: REACT_APP_COGNTIO_USERPOOL_ID
+        - Name: VITE_COGNITO_USERPOOL_ID
           Value: !Ref CognitoUserPool
-        - Name: REACT_APP_COGNITO_CLIENT_ID
+        - Name: VITE_COGNITO_CLIENT_ID
           Value: !Ref UserPoolClient
-        - Name: REACT_APP_GRAPHQL_URL
+        - Name: VITE_GRAPHQL_URL
           Value: !GetAtt GraphQLApi.GraphQLUrl
-        - Name: REACT_APP_REGION
+        - Name: VITE_REGION
           Value: !Ref "AWS::Region"
-      IAMServiceRole: !GetAtt AmplifyRole.Arn
       Name: !Ref "AWS::StackName"
       Repository: !Sub "https://github.com/${GitHubOrg}/${GitHubRepo}"
       Tags:
@@ -1340,9 +1315,3 @@ Outputs:
   CognitoEndpoint:
     Description: Cognito Endpoint URL
     Value: !Sub https://${UserPoolDomain}.auth.${AWS::Region}.amazoncognito.com
-  ReadOnlyLogin:
-    Description: Read-only Login URL
-    Value: !Sub https://${UserPoolDomain}.auth.${AWS::Region}.amazoncognito.com/login?client_id=${UserPoolClient}&response_type=token&scope=email+openid+${UserPoolResourceServer}/plaid.ro&redirect_uri=http://localhost:3000
-  ReadWriteLogin:
-    Description: Read-write Login URL
-    Value: !Sub https://${UserPoolDomain}.auth.${AWS::Region}.amazoncognito.com/login?client_id=${UserPoolClient}&response_type=token&scope=email+openid+${UserPoolResourceServer}/plaid.rw&redirect_uri=http://localhost:3000

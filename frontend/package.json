@@ -3,41 +3,25 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
-    "@aws-amplify/ui-react": "6.7.0",
+    "@aws-amplify/ui-react": "6.15.7",
     "@fontsource/inter": "5.1.0",
-    "@testing-library/jest-dom": "6.6.3",
-    "@testing-library/react": "16.0.1",
-    "@testing-library/user-event": "14.5.2",
-    "aws-amplify": "6.9.0",
+    "aws-amplify": "6.22.2",
     "react": "18.3.1",
     "react-dom": "18.3.1",
-    "react-plaid-link": "3.6.1",
-    "react-router-dom": "7.0.1",
-    "react-scripts": "5.0.1",
-    "web-vitals": "4.2.4"
+    "react-plaid-link": "5.0.0",
+    "react-router-dom": "7.18.5"
   },
   "scripts": {
-    "start": "react-scripts start",
-    "build": "react-scripts build",
-    "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "start": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "node --test tests/*.test.mjs"
   },
-  "eslintConfig": {
-    "extends": [
-      "react-app",
-      "react-app/jest"
-    ]
+  "devDependencies": {
+    "vite": "8.3.7",
+    "@vitejs/plugin-react": "6.3.0"
   },
-  "browserslist": {
-    "production": [
-      ">0.2%",
-      "not dead",
-      "not op_mini all"
-    ],
-    "development": [
-      "last 1 chrome version",
-      "last 1 firefox version",
-      "last 1 safari version"
-    ]
+  "engines": {
+    "node": ">=22.12.0"
   }
 }

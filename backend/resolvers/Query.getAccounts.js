@@ -7,7 +7,7 @@ import { util } from '@aws-appsync/utils';
  */
 export function request(ctx) {
   const { id } = ctx.arguments;
-  const { username } = ctx.identity;
+  const { sub: username } = ctx.identity;
 
   return {
     operation: 'Query',

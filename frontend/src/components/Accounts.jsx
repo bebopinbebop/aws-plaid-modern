@@ -10,6 +10,7 @@ const logger = new ConsoleLogger("Accounts");
 export default function Accounts({ id, updateAccounts }) {
 
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [accounts, setAccounts] = useState([]);
 
   const client = generateClient();
@@ -26,6 +27,7 @@ export default function Accounts({ id, updateAccounts }) {
       setLoading(false);
     } catch (err) {
       setLoading(false);
+      setError('Unable to load accounts. Use Reload accounts and transactions to retry.');
       logger.error('unable to get accounts', err);
     }
   }
@@ -59,7 +61,7 @@ export default function Accounts({ id, updateAccounts }) {
             })
           ) : (
             <TableRow>
-              <TableCell colSpan="5">No accounts found</TableCell>
+              <TableCell colSpan="5">{error || 'Waiting for account data. Reload after a few seconds.'}</TableCell>
             </TableRow>
           )
         )}

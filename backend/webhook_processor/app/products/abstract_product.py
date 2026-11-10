@@ -52,6 +52,11 @@ class AbstractProduct(ABC):
             logger.warning("Not sending empty batch of messages")
             return
 
+        # FIFO preserves update/remove order for each Item, including across batches.
+        for message in messages:
+            message["MessageGroupId"] = message["MessageAttributes"]["ItemId"]["StringValue"]
+            message["MessageDeduplicationId"] = message["Id"]
+
         for batch in batched(messages, constants.SQS_SEND_MESSAGE_BATCH_MAX):
             self._send_messages(batch)
 
@@ -93,4 +98,5 @@ class AbstractProduct(ABC):
         failed = response.get("Failed", [])
         if failed:
             metrics.add_metric(name="SQSSendFailed", unit=MetricUnit.Count, value=len(failed))
-            logger.error(failed)
+            logger.error("SQS rejected %s messages", len(failed))
+            raise RuntimeError("SQS batch contained failed messages; retry required")

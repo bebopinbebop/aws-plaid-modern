@@ -1,4 +1,8 @@
 dynamodb-encryption-sdk==3.3.0
-plaid-python==28.1.0
+plaid-python==46.0.0
 python-jose[cryptography]==3.5.0
 requests==2.32.5
+aws-lambda-powertools[tracer,validation]==3.39.0
+boto3==1.43.108
+cryptography==46.0.7
+python-dateutil==2.9.0.post0

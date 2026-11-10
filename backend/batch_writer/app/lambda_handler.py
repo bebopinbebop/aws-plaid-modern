@@ -29,7 +29,7 @@ table: "Table" = dynamodb.Table(TABLE_NAME)
 
 
 @metrics.log_metrics(capture_cold_start_metric=False)
-@tracer.capture_lambda_handler
+@tracer.capture_lambda_handler(capture_response=False)
 @logger.inject_lambda_context(log_event=False)
 def handler(event: Dict[str, Any], context: LambdaContext) -> Dict[str, Any]:
     records: List[Dict[str, Any]] = event.get("Records", [])
@@ -51,7 +51,7 @@ def handler(event: Dict[str, Any], context: LambdaContext) -> Dict[str, Any]:
                 record.get("messageAttributes", {}).get("EventName", {}).get("stringValue")
             )
 
-            if event_name == "DELETE":
+            if event_name in ("DELETE", "REMOVE"):
                 key = {
                     "pk": item["pk"],
                     "sk": item["sk"],
