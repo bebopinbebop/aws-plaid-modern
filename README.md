@@ -1,3 +1,5 @@
+> **Deployed November 12, 2026:** The development stack and Amplify website are live with Plaid Sandbox. Hosting checks passed; the full signed-in banking flow still needs acceptance testing. See [current deployment status and next steps](doc/DEPLOYMENT-STATUS.md), including resource tags, ongoing costs and the automatic-build behavior of pushes to `main`.
+
 > **Predeployment refresh (2026-11-10):** Docker/SAM container builds, local Lambda smoke checks and six AppSync service evaluations now pass. See [the current predeployment review](doc/PREDEPLOYMENT.md) for exact scope, target, credential helper, blockers and future deployment commands. No AWS deployment has occurred. The older results below remain a historical record.
 
 # AWS Plaid Modern — setup, run and deployment guide

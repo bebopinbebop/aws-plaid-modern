@@ -1,6 +1,6 @@
 # Current secure data flow: Amplify, AWS and Plaid
 
-Updated **November 11, 2026**. This supplemental README explains the modernized repository's design and where its credentials and transaction data travel. The application has passed local/container checks; **the AWS application and complete live Plaid flow have not been deployed and verified**. See the [setup guide](README.md) and [predeployment review](doc/PREDEPLOYMENT.md) for operational steps.
+Updated **November 12, 2026**. This supplemental README explains the modernized repository's design and where its credentials and transaction data travel. **The AWS development stack and Amplify website are deployed using Plaid Sandbox; the full signed-in Plaid flow remains unverified.** See [current deployment status and next steps](doc/DEPLOYMENT-STATUS.md), the [setup guide](README.md) and the historical [predeployment review](doc/PREDEPLOYMENT.md) for operational context.
 
 ## The overall picture
 

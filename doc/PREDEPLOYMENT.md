@@ -1,5 +1,7 @@
 # Predeployment review — 2026-11-10
 
+> **Historical review:** Deployment was subsequently authorized and completed on November 12, 2026. See [current deployment status](DEPLOYMENT-STATUS.md) for the deployed state, verification limits, tags and next steps. The review below records the earlier predeployment state.
+
 **Assessment: local/container validation passes; cloud deployment is not yet ready for approval.** The remaining prerequisites are saved/validated Sandbox credentials, confirmed regional Amplify GitHub App access, approval of the source branch to host, and an explicit deployment decision. No stack, change set, artifact upload, hosting job or application-data mutation was created during this review.
 
 ## Target and source
