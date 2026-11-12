@@ -1248,15 +1248,17 @@ Resources:
                 paths:
                   - node_modules/**/*
       CustomHeaders: |-
-        customHeaders:
-          - pattern: '**/*'
-            headers:
-              - key: 'X-Frame-Options'
-                value: 'SAMEORIGIN'
-              - key: 'X-XSS-Protection'
-                value: '1; mode=block'
-              - key: 'X-Content-Type-Options'
-                value: 'nosniff'
+        applications:
+          - appRoot: frontend
+            customHeaders:
+              - pattern: '**/*'
+                headers:
+                  - key: 'X-Frame-Options'
+                    value: 'SAMEORIGIN'
+                  - key: 'X-XSS-Protection'
+                    value: '1; mode=block'
+                  - key: 'X-Content-Type-Options'
+                    value: 'nosniff'
       CustomRules:
         - Source: '</^[^.]+$|\.(?!(css|gif|ico|jpg|js|png|txt|svg|woff|woff2|ttf|map|json|webp)$)([^.]+$)/>'
           Status: 200
