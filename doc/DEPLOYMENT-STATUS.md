@@ -34,6 +34,8 @@ Use that Project tag in AWS resource discovery and the stack's **Resources** tab
 
 ## Next session checklist
 
+See the [November 13 next-session runbook](NEXT-SESSION.md) for read-only resume commands, acceptance evidence, troubleshooting resources and data-preservation considerations.
+
 1. Open the Amplify branch URL from the stack's `FrontendUrl` output. Create a test account, verify email and enroll TOTP MFA.
 2. Sign in and connect a **Sandbox** institution through Plaid Link. Confirm initial accounts/transactions appear and remain scoped to that user.
 3. Exercise transaction updates/removals and webhook-driven sync; inspect Lambda errors and both FIFO dead-letter queues. Verify disconnect removes the intended Item and revokes its Plaid access.
